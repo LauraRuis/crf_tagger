@@ -51,6 +51,7 @@ class BiLSTM_ChainCRF(nn.Module):
 
         # scale alphas to avoid underflow
         scaled_alphas = init_alphas / scales[0][0]
+        scaled_alphas_2 = init_alphas / scales[0][0]
 
         bsz, time, dim = feats.unsqueeze(0).size()
 
@@ -58,8 +59,7 @@ class BiLSTM_ChainCRF(nn.Module):
         for t, feat in enumerate(feats):
 
             # calculate emission probabilities (the same regardless of the next tag)
-            emit_scores = feat.view(bsz, self.tagset_size).expand(1, self.tagset_size, self.tagset_size)
-            emit_scores = torch.transpose(emit_scores, 1, 2)
+            emit_scores = feat.view(bsz, self.tagset_size).unsqueeze(2)
 
             # calculate transition probabilities
             trans_scores = torch.exp(self.log_transitions).unsqueeze(0)
@@ -103,15 +103,22 @@ class BiLSTM_ChainCRF(nn.Module):
         init_vvars[0][self.tag_to_ix[START_TAG]] = 0
 
         # forward_var at step i holds the viterbi variables for step i-1
-        forward_var = init_vvars
+        forward_var = init_vvars.unsqueeze(0)
+
+        bsz, time, dim = feats.unsqueeze(0).size()
+
         for feat in feats:
 
-            # calculate viterbi vars
-            next_tag_vars = forward_var.unsqueeze(0) + self.log_transitions.unsqueeze(0)
+            # calculate scores of next tag per tag
+            forward_var = forward_var.view(bsz, 1, self.tagset_size)
+            trans_scores = self.log_transitions.unsqueeze(0)
+            next_tag_vars = forward_var + trans_scores
+
+            # get best next tags and viterbi vars
             _, idx = torch.max(next_tag_vars, 2)
-            best_tag_ids = idx
-            indices = torch.transpose(best_tag_ids.unsqueeze(0).repeat(1, self.tagset_size, 1), 1, 2)
-            viterbivars_t = torch.gather(next_tag_vars, 2, indices)[:, :, 0]
+            best_tag_ids = idx.view(bsz, -1)
+            indices = torch.transpose(best_tag_ids.unsqueeze(0), 1, 2)
+            viterbivars_t = torch.gather(next_tag_vars, 2, indices).squeeze(2)
 
             # add emission scores and assign forward_var to the set
             # of viterbi variables we just computed
